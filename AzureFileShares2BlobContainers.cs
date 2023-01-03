@@ -33,24 +33,24 @@ namespace AzureFileShares2BlobContainers
         [OpenApiParameter(name: "videoId", In = ParameterLocation.Query, Required = true, Type = typeof(string), Description = "The **VideoId** to process")]
         [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "text/plain", bodyType: typeof(string), Description = "The OK response")]
         public async Task<IActionResult> RunAsync(
-            [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
+            [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = null)] HttpRequest req,
             [Blob("livestream-recorder"), StorageAccount("AzureStorage")] BlobContainerClient blobContainerClient)
         {
             var videoId = req.GetQueryParameterDictionary()["videoId"];
             var shareDirectoryClient = await ConnectFileShareAsync();
-            await GetFilesAsync(shareDirectoryClient, videoId);
+            await DownloadFromFileShareAsync(shareDirectoryClient, videoId);
             await UploadToBlobContainerAsync(blobContainerClient, videoId);
             await DeleteFilesFromFileShareAsync(shareDirectoryClient, videoId);
 
             return new OkResult();
         }
 
-        private static string[] GetFileNames(string videoId) => new[] { $"{videoId}.mp4", $"{videoId}.json", $"{videoId}.chat.json" };
+        private static string[] GetFileNames(string videoId) => new[] { $"{videoId}.mp4", $"{videoId}.json", $"{videoId}.chat.json", $"{videoId}.jpg", $"{videoId}.webp" };
 
         private async Task<ShareDirectoryClient> ConnectFileShareAsync()
         {
             // Get the connection string from app settings
-            string connectionString = Environment.GetEnvironmentVariable("FileShareConnextionString");
+            string connectionString = Environment.GetEnvironmentVariable("AzureStorage");
 
             var shareClient = new ShareClient(connectionString, "livestream-recorder");
 
@@ -68,7 +68,7 @@ namespace AzureFileShares2BlobContainers
             return rootdirectory;
         }
 
-        private async Task GetFilesAsync(ShareDirectoryClient shareDirectoryClient, string videoId)
+        private async Task DownloadFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string videoId)
         {
             var files = GetFileNames(videoId);
 
@@ -76,32 +76,32 @@ namespace AzureFileShares2BlobContainers
             {
                 var shareFileClient = shareDirectoryClient.GetFileClient(filename);
                 // Ensure that the file exists
-                if (await shareFileClient.ExistsAsync())
-                {
-                    _logger.LogInformation($"File exists: {shareFileClient.Name}");
+                if (!await shareFileClient.ExistsAsync()) continue;
 
-                    // Download the file
-                    ShareFileDownloadInfo download = await shareFileClient.DownloadAsync();
+                _logger.LogInformation($"File exists: {shareFileClient.Name}");
 
-                    // Save the data to a local file, overwrite if the file already exists
-                    using FileStream stream = File.OpenWrite(shareFileClient.Name);
-                    await download.Content.CopyToAsync(stream);
-                    await stream.FlushAsync();
-                    stream.Close();
+                // Download the file
+                ShareFileDownloadInfo download = await shareFileClient.DownloadAsync();
 
-                    // Display where the file was saved
-                    _logger.LogInformation($"File downloaded: {stream.Name}");
-                }
+                // Save the data to a local file, overwrite if the file already exists
+                using FileStream stream = File.OpenWrite(shareFileClient.Name);
+                await download.Content.CopyToAsync(stream);
+                await stream.FlushAsync();
+                stream.Close();
+
+                // Display where the file was saved
+                _logger.LogInformation($"File downloaded: {stream.Name}");
             }
         }
 
         private async Task UploadToBlobContainerAsync(BlobContainerClient blobContainerClient, string videoId)
         {
-            var blobs = new List<BlobClient>(){
-                 blobContainerClient.GetBlobClient($"{videoId}.mp4")
-            };
-            foreach (var blobClient in blobs)
+            var files = GetFileNames(videoId);
+            foreach (var filename in files)
             {
+                if (!File.Exists(filename)) continue;
+
+                var blobClient = blobContainerClient.GetBlobClient(filename);
                 if (blobClient.Exists())
                 {
                     _logger.LogWarning("Blob already exists {filename}", blobClient.Name);
@@ -109,26 +109,39 @@ namespace AzureFileShares2BlobContainers
 
                 try
                 {
-                    _logger.LogInformation("Start to upload {filename} to blob storage {name}", blobClient.Name, blobContainerClient.Name);
-                    var response = await blobClient.UploadAsync(blobClient.Name,
-                                                                new BlobUploadOptions
-                                                                {
-                                                                    HttpHeaders = new BlobHttpHeaders
-                                                                    {
-                                                                        ContentType = MimeMapping.MimeUtility.GetMimeMapping(blobClient.Name)
-                                                                    }
-                                                                });
-                    _logger.LogInformation("Upload file {filename} to azure finish.", blobClient.Name);
-                    _logger.LogDebug("The blob last modified time is {lastModified}", response.Value.LastModified);
-                }
-                finally { File.Delete(blobClient.Name); }
+                    using FileStream fs = new(blobClient.Name, FileMode.Open, FileAccess.Read);
+                    _logger.LogInformation("Start Upload {path} to azure storage", blobClient.Name);
 
-                Dictionary<string, string> metadata = new()
+                    long fileSize = new FileInfo(blobClient.Name).Length;
+
+                    double percentage = 0;
+
+                    _ = await blobClient.UploadAsync(
+                        content: fs,
+                        httpHeaders: new BlobHttpHeaders { ContentType = MimeMapping.MimeUtility.GetMimeMapping(blobClient.Name) },
+                        accessTier: AccessTier.Cool,
+                        metadata: new Dictionary<string, string>() { { "id", videoId }, { "fileSize", fileSize.ToString() } },
+                        progressHandler: new Progress<long>(progress =>
+                        {
+                            double _percentage = Math.Round(((double)progress) / fileSize * 100);
+                            if (_percentage != percentage)
+                            {
+                                percentage = _percentage;
+                                _logger.LogTrace("Uploading...{progress}% {path}", _percentage, blobClient.Name);
+                            }
+                        })
+                    );
+                    _ = await blobClient.SetTagsAsync(new Dictionary<string, string>() { { "id", videoId } });
+                    _logger.LogInformation("Finish Upload {path} to azure storage", blobClient.Name);
+
+                    return;
+                }
+                catch (Exception e)
                 {
-                    { "videoId", videoId }
-                };
-                await blobClient.SetMetadataAsync(metadata);
-                return;
+                    _logger.LogError("Upload Failed: {fileName}", Path.GetFileName(blobClient.Name));
+                    _logger.LogError("{errorMessage}", e.Message);
+                    throw;
+                }
             }
         }
 

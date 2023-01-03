@@ -1,7 +1,14 @@
 {
   "dependencies": {
-    "appInsights1": {
-      "type": "appInsights.sdk"
+    "secrets1": {
+      "type": "secrets.user"
+    },
+    "storage1": {
+      "secretStore": "LocalSecretsFile",
+      "resourceId": "/subscriptions/[parameters('subscriptionId')]/resourceGroups/[parameters('resourceGroupName')]/providers/Microsoft.Storage/storageAccounts/livestreamrecorder",
+      "type": "storage.azure",
+      "connectionId": "AzureStorage",
+      "dynamicId": null
     }
   }
 }
