@@ -4,11 +4,6 @@
       "resourceId": "/subscriptions/[parameters('subscriptionId')]/resourceGroups/[parameters('resourceGroupName')]/providers/Microsoft.Storage/storageAccounts/livestreamrecorder",
       "type": "storage.azure",
       "connectionId": "AzureWebJobsStorage"
-    },
-    "storage1": {
-      "resourceId": "/subscriptions/[parameters('subscriptionId')]/resourceGroups/[parameters('resourceGroupName')]/providers/Microsoft.Storage/storageAccounts/livestreamrecorder",
-      "type": "storage.azure",
-      "connectionId": "AzureStorage"
     }
   }
 }
