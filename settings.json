@@ -1,0 +1,27 @@
+﻿{
+    "Serilog": {
+        "LevelSwitches": { "$controlSwitch": "Information" },
+        "MinimumLevel": { "ControlledBy": "$controlSwitch" },
+        "WriteTo": [
+            {
+                "Name": "Seq",
+                "Args": {
+                    "serverUrl": "http://localhost:5341",
+                    "apiKey": "",
+                    "controlLevelSwitch": "$controlSwitch"
+                }
+            }
+        ]
+    },
+    "FileExtensions": [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".mp4",
+        ".webm",
+        ".mkv",
+        ".info.json",
+        ".live_chat.json"
+    ]
+}
