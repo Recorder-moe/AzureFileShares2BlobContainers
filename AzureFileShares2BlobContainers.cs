@@ -8,13 +8,11 @@ using Microsoft.Azure.WebJobs;
 using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 
@@ -23,19 +21,11 @@ namespace AzureFileShares2BlobContainers
     public class AzureFileShares2BlobContainers
     {
         private readonly ILogger<AzureFileShares2BlobContainers> _logger;
-        private readonly string[] _extensions;
 
-        public AzureFileShares2BlobContainers(ILogger<AzureFileShares2BlobContainers> log,
-            IConfiguration configuration)
+        public AzureFileShares2BlobContainers(ILogger<AzureFileShares2BlobContainers> log)
         {
             _logger = log;
-            _extensions = configuration.GetSection("FileExtensions")
-                                       .Get<string[]>()
-                                       .Select(p => p.StartsWith('.') ? p : $".{p}")
-                                       .ToArray();
         }
-
-        private string[] GetFileNames(string videoId) => _extensions.Select(p => videoId + p).ToArray();
 
         [FunctionName("AzureFileShares2BlobContainers")]
         [OpenApiOperation(operationId: "Run", tags: new[] { "name" })]
@@ -54,6 +44,8 @@ namespace AzureFileShares2BlobContainers
 
             return new OkResult();
         }
+
+        private static string[] GetFileNames(string videoId) => new[] { $"{videoId}.mp4", $"{videoId}.json", $"{videoId}.chat.json", $"{videoId}.jpg", $"{videoId}.webp" };
 
         private async Task<ShareDirectoryClient> ConnectFileShareAsync()
         {
