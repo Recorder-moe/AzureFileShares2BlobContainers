@@ -9,6 +9,13 @@
       "type": "storage.azure",
       "connectionId": "AzureStorage",
       "dynamicId": null
+    },
+    "storage2": {
+      "secretStore": "LocalSecretsFile",
+      "resourceId": "/subscriptions/[parameters('subscriptionId')]/resourceGroups/[parameters('resourceGroupName')]/providers/Microsoft.Storage/storageAccounts/livestreamrecorder",
+      "type": "storage.azure",
+      "connectionId": "AzureWebJobsStorage",
+      "dynamicId": null
     }
   }
 }
