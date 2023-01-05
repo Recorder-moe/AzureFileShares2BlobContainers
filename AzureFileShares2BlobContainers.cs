@@ -2,6 +2,7 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Files.Shares;
 using Azure.Storage.Files.Shares.Models;
+using DataSizeUnits;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.WebJobs;
@@ -14,6 +15,7 @@ using Serilog.Context;
 using Serilog.Events;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -183,6 +185,7 @@ public class AzureFileShares2BlobContainers
             long fileSize = stream.Length;
 
             double percentage = 0;
+            var stopWatch = new Stopwatch();
 
             var metaTags = new Dictionary<string, string>()
             {
@@ -190,6 +193,7 @@ public class AzureFileShares2BlobContainers
                 { "fileSize", fileSize.ToString() }
             };
 
+            stopWatch.Start();
             _ = await blobClient.UploadAsync(
                 content: stream,
                 httpHeaders: new BlobHttpHeaders { ContentType = MimeMapping.MimeUtility.GetMimeMapping(filename) },
@@ -201,12 +205,18 @@ public class AzureFileShares2BlobContainers
                     if (_percentage != percentage)
                     {
                         percentage = _percentage;
-                        _logger.Debug("{filename} Uploading...{progress}%", filename, _percentage);
+                        _logger.Debug("{filename} Uploading...{progress}%, at speed {speed}/s",
+                                      filename,
+                                      _percentage,
+                                      new DataSize(progress / (long)stopWatch.Elapsed.TotalSeconds).Normalize().ToString());
                     }
                 }),
                 cancellationToken: cancellation);
+            stopWatch.Stop();
             _ = await blobClient.SetTagsAsync(metaTags, cancellationToken: cancellation);
-            _logger.Information("Finish Upload {filename} to azure storage", filename);
+            _logger.Information("Finish Upload {filename} to azure storage, at speed {speed}/s", 
+                filename,
+                new DataSize(fileSize / (long)stopWatch.Elapsed.TotalSeconds).Normalize().ToString());
 
             return;
         }
