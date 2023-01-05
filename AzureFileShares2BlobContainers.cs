@@ -93,8 +93,8 @@ public class AzureFileShares2BlobContainers
         foreach (var filename in files)
         {
             CancellationTokenSource cancellation = new();
-            tasks.Add(DownloadFromFileShareAsync(shareDirectoryClient, filename, cancellation)
-                        .ContinueWith(_ => UploadToBlobContainerAsync(blobContainerClient, filename, cancellation.Token))
+            tasks.Add(GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation)
+                        .ContinueWith(async stream => UploadToBlobContainerAsync(blobContainerClient, filename, await stream, cancellation.Token))
                         .ContinueWith(_ => DeleteFilesFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token)
             ));
         }
@@ -123,7 +123,9 @@ public class AzureFileShares2BlobContainers
         return rootdirectory;
     }
 
-    private async Task DownloadFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filename, CancellationTokenSource cancellationTokenSource)
+    private async Task<Stream> GetStreamFromFileShareAsync(ShareDirectoryClient shareDirectoryClient,
+                                                          string filename,
+                                                          CancellationTokenSource cancellationTokenSource)
     {
         var shareFileClient = shareDirectoryClient.GetFileClient(filename);
 
@@ -132,7 +134,7 @@ public class AzureFileShares2BlobContainers
         {
             _logger.Debug("Share File not exists, skip: {filename}", filename);
             cancellationTokenSource.Cancel();
-            return;
+            return null;
         }
 
         _logger.Information("Share File exists: {sharename} {path}", shareFileClient.ShareName, shareFileClient.Path);
@@ -140,26 +142,22 @@ public class AzureFileShares2BlobContainers
         // Download the file
         ShareFileDownloadInfo download = await shareFileClient.DownloadAsync();
 
-        // Save the data to a local file, overwrite if the file already exists
-        using FileStream stream = File.OpenWrite(Path.Combine(_tempDir, filename));
-        await download.Content.CopyToAsync(stream);
-        await stream.FlushAsync();
-        stream.Close();
-
-        // Display where the file was saved
-        _logger.Information("File downloaded: {filepath}", stream.Name);
+        _logger.Information("Get file stream. {filename} {filelength}", filename, download.ContentLength);
+        return download.Content;
     }
 
-    private async Task UploadToBlobContainerAsync(BlobContainerClient blobContainerClient, string filename, CancellationToken cancellation)
+    private async Task UploadToBlobContainerAsync(BlobContainerClient blobContainerClient,
+                                                  string filename,
+                                                  Stream stream,
+                                                  CancellationToken cancellation)
     {
         if (cancellation.IsCancellationRequested) return;
 
-        var videoId = filename.Split('.')[0];
-        var filepath = Path.Combine(_tempDir, filename);
-        if (!File.Exists(filepath))
+        if (null == stream)
         {
-            throw new FileNotFoundException("File not found while uploading to Blob Storage. {filepath}", filepath);
+            throw new ArgumentNullException(nameof(stream),$"Stream is null while uploading to Blob Storage. {filename}");
         }
+        var videoId = filename.Split('.')[0];
 
         var blobClient = blobContainerClient.GetBlobClient(filename);
         if (blobClient.Exists(cancellation))
@@ -169,22 +167,23 @@ public class AzureFileShares2BlobContainers
 
         try
         {
-            using FileStream fs = new(filepath, FileMode.Open, FileAccess.Read);
-            _logger.Information("Start Upload {filepath} to azure storage", filepath);
+            _logger.Information("Start streaming {filename} from azure file share to azure blob storage", filename);
 
-            long fileSize = new FileInfo(filepath).Length;
+            long fileSize = stream.Length;
 
             double percentage = 0;
 
+            var metaTags = new Dictionary<string, string>()
+            {
+                { "id", videoId },
+                { "fileSize", fileSize.ToString() }
+            };
+
             _ = await blobClient.UploadAsync(
-                content: fs,
+                content: stream,
                 httpHeaders: new BlobHttpHeaders { ContentType = MimeMapping.MimeUtility.GetMimeMapping(filename) },
                 accessTier: AccessTier.Cool,
-                metadata: new Dictionary<string, string>()
-                {
-                    { "id", videoId },
-                    { "fileSize", fileSize.ToString() }
-                },
+                metadata: metaTags,
                 progressHandler: new Progress<long>(progress =>
                 {
                     double _percentage = Math.Round(((double)progress) / fileSize * 100);
@@ -195,14 +194,14 @@ public class AzureFileShares2BlobContainers
                     }
                 }),
                 cancellationToken: cancellation);
-            _ = await blobClient.SetTagsAsync(new Dictionary<string, string>() { { "id", videoId } }, cancellationToken: cancellation);
-            _logger.Information("Finish Upload {filepath} to azure storage", filepath);
+            _ = await blobClient.SetTagsAsync(metaTags, cancellationToken: cancellation);
+            _logger.Information("Finish Upload {filename} to azure storage", filename);
 
             return;
         }
         catch (Exception e)
         {
-            _logger.Error("Upload Failed: {filepath}", Path.GetFileName(filepath));
+            _logger.Error("Upload Failed: {filename}", Path.GetFileName(filename));
             _logger.Error("{errorMessage}", e.Message);
             throw;
         }
