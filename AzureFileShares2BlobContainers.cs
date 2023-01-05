@@ -84,7 +84,7 @@ public class AzureFileShares2BlobContainers
         [Blob("livestream-recorder"), StorageAccount("AzureStorage")] BlobContainerClient blobContainerClient)
     {
         var videoId = req.GetQueryParameterDictionary()["videoId"];
-        using var _ = LogContext.PushProperty("videoId", videoId);
+        _ = LogContext.PushProperty("videoId", videoId);
 
         var files = GetFileNames(videoId);
         var shareDirectoryClient = await GetFileShareClientAsync();
@@ -93,10 +93,12 @@ public class AzureFileShares2BlobContainers
         foreach (var filename in files)
         {
             CancellationTokenSource cancellation = new();
-            tasks.Add(GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation)
-                        .ContinueWith(async stream => UploadToBlobContainerAsync(blobContainerClient, filename, await stream, cancellation.Token))
-                        .ContinueWith(_ => DeleteFilesFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token)
-            ));
+            tasks.Add(Task.Run(async () =>
+            {
+                var stream = await GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation);
+                await UploadToBlobContainerAsync(blobContainerClient, filename, stream, cancellation.Token);
+                await DeleteFilesFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token);
+            }));
         }
 
         await Task.WhenAll(tasks);
@@ -139,11 +141,20 @@ public class AzureFileShares2BlobContainers
 
         _logger.Information("Share File exists: {sharename} {path}", shareFileClient.ShareName, shareFileClient.Path);
 
-        // Download the file
-        ShareFileDownloadInfo download = await shareFileClient.DownloadAsync();
-
-        _logger.Information("Get file stream. {filename} {filelength}", filename, download.ContentLength);
-        return download.Content;
+        try
+        {
+            // Download the file
+            var stream = await shareFileClient.OpenReadAsync(cancellationToken: cancellationTokenSource.Token);
+            _logger.Information("Get file stream. {filename} {filelength}", filename, stream.Length);
+            return stream;
+        }
+        catch (ShareFileModifiedException e)
+        {
+            _logger.Error("Share File is currently being modified: {filename}", filename);
+            _logger.Error("{error}: {errorMessage}", nameof(e), e.Message);
+            cancellationTokenSource.Cancel();
+            return null;
+        }
     }
 
     private async Task UploadToBlobContainerAsync(BlobContainerClient blobContainerClient,
@@ -155,7 +166,7 @@ public class AzureFileShares2BlobContainers
 
         if (null == stream)
         {
-            throw new ArgumentNullException(nameof(stream),$"Stream is null while uploading to Blob Storage. {filename}");
+            throw new ArgumentNullException(nameof(stream), $"Stream is null while uploading to Blob Storage. {filename}");
         }
         var videoId = filename.Split('.')[0];
 
