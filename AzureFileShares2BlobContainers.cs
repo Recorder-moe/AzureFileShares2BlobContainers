@@ -51,6 +51,7 @@ public class AzureFileShares2BlobContainers
 #endif
 
         _logger = new LoggerConfiguration()
+                        .MinimumLevel.Verbose()
                         .MinimumLevel.Override("Microsoft", LogEventLevel.Fatal)
                         .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Fatal)
                         .MinimumLevel.Override("System", LogEventLevel.Fatal)
@@ -62,7 +63,7 @@ public class AzureFileShares2BlobContainers
                         .Enrich.FromLogContext()
                         .CreateLogger();
 
-        _logger.Verbose("Starting up...");
+        _logger.Debug("Starting up...");
     }
 
     private string[] GetFileNames(string videoId) => _extensions.Select(p => videoId + p).ToArray();
@@ -129,7 +130,7 @@ public class AzureFileShares2BlobContainers
         // Skip if the file is not exists
         if (!await shareFileClient.ExistsAsync())
         {
-            _logger.Verbose("Share File not exists, skip: {filename}", filename);
+            _logger.Debug("Share File not exists, skip: {filename}", filename);
             cancellationTokenSource.Cancel();
             return;
         }
@@ -190,7 +191,7 @@ public class AzureFileShares2BlobContainers
                     if (_percentage != percentage)
                     {
                         percentage = _percentage;
-                        _logger.Verbose("{filename} Uploading...{progress}%", filename, _percentage);
+                        _logger.Debug("{filename} Uploading...{progress}%", filename, _percentage);
                     }
                 }),
                 cancellationToken: cancellation);
