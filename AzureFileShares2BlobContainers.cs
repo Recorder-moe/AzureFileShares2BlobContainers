@@ -37,14 +37,9 @@ public class AzureFileShares2BlobContainers
         ".webm",
         ".mkv",
         ".info.json",
-        ".live_chat.json"
+        ".live_chat.json",
+        ".description"
     };
-
-#if !DEBUG
-    private readonly string _tempDir = @"C:\home\data";
-#else
-    private readonly string _tempDir = Path.GetTempPath();
-#endif
 
     public AzureFileShares2BlobContainers()
     {
@@ -97,9 +92,11 @@ public class AzureFileShares2BlobContainers
             CancellationTokenSource cancellation = new();
             tasks.Add(Task.Run(async () =>
             {
-                var stream = await GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation);
-                await UploadToBlobContainerAsync(blobContainerClient, filename, stream, cancellation.Token);
-                await DeleteFilesFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token);
+                using (Stream stream = await GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation))
+                {
+                    await UploadToBlobContainerAsync(blobContainerClient, filename, stream, cancellation.Token);
+                }
+                await DeleteFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token);
             }));
         }
 
@@ -145,7 +142,7 @@ public class AzureFileShares2BlobContainers
 
         try
         {
-            // Download the file
+            // Open stream
             var stream = await shareFileClient.OpenReadAsync(cancellationToken: cancellationTokenSource.Token);
             _logger.Information("Get file stream. {filename} {filelength}", filename, stream.Length);
             return stream;
@@ -193,6 +190,7 @@ public class AzureFileShares2BlobContainers
                 { "fileSize", fileSize.ToString() }
             };
 
+            stream.Seek(0, SeekOrigin.Begin);
             stopWatch.Start();
             _ = await blobClient.UploadAsync(
                 content: stream,
@@ -214,7 +212,7 @@ public class AzureFileShares2BlobContainers
                 cancellationToken: cancellation);
             stopWatch.Stop();
             _ = await blobClient.SetTagsAsync(metaTags, cancellationToken: cancellation);
-            _logger.Information("Finish Upload {filename} to azure storage, at speed {speed}/s", 
+            _logger.Information("Finish Upload {filename} to azure storage, at speed {speed}/s",
                 filename,
                 new DataSize(fileSize / (long)stopWatch.Elapsed.TotalSeconds).Normalize().ToString());
 
@@ -228,7 +226,7 @@ public class AzureFileShares2BlobContainers
         }
     }
 
-    private async Task DeleteFilesFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filename, CancellationToken cancellation)
+    private async Task DeleteFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filename, CancellationToken cancellation)
     {
         if (cancellation.IsCancellationRequested) return;
 
