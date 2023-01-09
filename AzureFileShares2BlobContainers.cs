@@ -21,12 +21,13 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web.Http;
 
 namespace AzureFileShares2BlobContainers;
 
 public class AzureFileShares2BlobContainers
 {
-    private readonly ILogger _logger;
+    private static ILogger _logger;
     private readonly string[] _extensions = new string[]
     {
         ".jpg",
@@ -41,13 +42,36 @@ public class AzureFileShares2BlobContainers
         ".description"
     };
 
+    public static ILogger Logger
+    {
+        get
+        {
+            if (null == _logger
+                || _logger.GetType() != typeof(Serilog.Core.Logger))
+            {
+                _logger = MakeLogger();
+            }
+            return _logger;
+        }
+        set => _logger = value;
+    }
+
     public AzureFileShares2BlobContainers()
     {
 #if DEBUG
         Serilog.Debugging.SelfLog.Enable(msg => Console.WriteLine(msg));
 #endif
 
-        _logger = new LoggerConfiguration()
+        Logger.Verbose("Starting up...");
+    }
+
+    private string[] GetFileNames(string videoId) => _extensions.Select(p => videoId + p).ToArray();
+
+    public static ILogger MakeLogger()
+    {
+        Serilog.Debugging.SelfLog.Enable(msg => Console.WriteLine(msg));
+
+        var logger = new LoggerConfiguration()
                         .MinimumLevel.Verbose()
                         .MinimumLevel.Override("Microsoft", LogEventLevel.Fatal)
                         .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Fatal)
@@ -59,11 +83,8 @@ public class AzureFileShares2BlobContainers
                                      restrictedToMinimumLevel: LogEventLevel.Verbose)
                         .Enrich.FromLogContext()
                         .CreateLogger();
-
-        _logger.Debug("Starting up...");
+        return logger;
     }
-
-    private string[] GetFileNames(string videoId) => _extensions.Select(p => videoId + p).ToArray();
 
     /// <summary>
     /// Entrypoint!
@@ -76,36 +97,46 @@ public class AzureFileShares2BlobContainers
     [OpenApiSecurity("function_key", SecuritySchemeType.ApiKey, Name = "code", In = OpenApiSecurityLocationType.Query)]
     [OpenApiParameter(name: "videoId", In = ParameterLocation.Query, Required = true, Type = typeof(string), Description = "The **VideoId** to process")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.OK, contentType: "text/plain", bodyType: typeof(string), Description = "The OK response")]
+    [OpenApiResponseWithBody(statusCode: HttpStatusCode.InternalServerError, contentType: "text/html", bodyType: typeof(string), Description = "The Error response")]
     public async Task<IActionResult> RunAsync(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = null)] HttpRequest req,
-        [Blob("livestream-recorder"), StorageAccount("AzureStorage")] BlobContainerClient blobContainerClient)
+        [Blob("livestream-recorder")] BlobContainerClient blobContainerClient)
     {
-        var videoId = req.GetQueryParameterDictionary()["videoId"];
-        _ = LogContext.PushProperty("videoId", videoId);
-
-        var files = GetFileNames(videoId);
-        var shareDirectoryClient = await GetFileShareClientAsync();
-
-        var tasks = new List<Task>();
-        foreach (var filename in files)
+        try
         {
-            CancellationTokenSource cancellation = new();
-            tasks.Add(Task.Run(async () =>
+            var videoId = req.GetQueryParameterDictionary()["videoId"];
+            _ = LogContext.PushProperty("videoId", videoId);
+            Logger.Verbose("API triggered! {apiname}", nameof(RunAsync));
+
+            var files = GetFileNames(videoId);
+            var shareDirectoryClient = await GetFileShareClientAsync();
+
+            var tasks = new List<Task>();
+            foreach (var filename in files)
             {
-                using (Stream stream = await GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation))
+                CancellationTokenSource cancellation = new();
+                tasks.Add(Task.Run(async () =>
                 {
-                    await UploadToBlobContainerAsync(blobContainerClient, filename, stream, cancellation.Token);
-                }
-                await DeleteFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token);
-            }));
+                    using (Stream stream = await GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation))
+                    {
+                        await UploadToBlobContainerAsync(blobContainerClient, filename, stream, cancellation.Token);
+                    }
+                    await DeleteFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token);
+                }));
+            }
+
+            await Task.WhenAll(tasks);
+            Logger.Information("Finish task {videoId}", videoId);
         }
-
-        await Task.WhenAll(tasks);
-
+        catch (Exception e)
+        {
+            Logger.Error("Unhandled exception in {apiname}: {exception}", nameof(RunAsync), e);
+            return new InternalServerErrorResult();
+        }
         return new OkResult();
     }
 
-    private async Task<ShareDirectoryClient> GetFileShareClientAsync()
+    private static async Task<ShareDirectoryClient> GetFileShareClientAsync()
     {
         // Get the connection string from app settings
         string connectionString = Environment.GetEnvironmentVariable("AzureStorage");
@@ -115,7 +146,7 @@ public class AzureFileShares2BlobContainers
         // Ensure that the share exists
         if (!await shareClient.ExistsAsync())
         {
-            _logger.Fatal("Share not exists: {fileShareName}!!", shareClient.Name);
+            Logger.Fatal("Share not exists: {fileShareName}!!", shareClient.Name);
             throw new Exception("File Share does not exist.");
         }
 
@@ -124,7 +155,7 @@ public class AzureFileShares2BlobContainers
         return rootdirectory;
     }
 
-    private async Task<Stream> GetStreamFromFileShareAsync(ShareDirectoryClient shareDirectoryClient,
+    private static async Task<Stream> GetStreamFromFileShareAsync(ShareDirectoryClient shareDirectoryClient,
                                                           string filename,
                                                           CancellationTokenSource cancellationTokenSource)
     {
@@ -133,30 +164,30 @@ public class AzureFileShares2BlobContainers
         // Skip if the file is not exists
         if (!await shareFileClient.ExistsAsync())
         {
-            _logger.Debug("Share File not exists, skip: {filename}", filename);
+            Logger.Debug("Share File not exists, skip: {filename}", filename);
             cancellationTokenSource.Cancel();
             return null;
         }
 
-        _logger.Information("Share File exists: {sharename} {path}", shareFileClient.ShareName, shareFileClient.Path);
+        Logger.Information("Share File exists: {sharename} {path}", shareFileClient.ShareName, shareFileClient.Path);
 
         try
         {
             // Open stream
             var stream = await shareFileClient.OpenReadAsync(cancellationToken: cancellationTokenSource.Token);
-            _logger.Information("Get file stream. {filename} {filelength}", filename, stream.Length);
+            Logger.Information("Get file stream. {filename} {filelength}", filename, stream.Length);
             return stream;
         }
         catch (ShareFileModifiedException e)
         {
-            _logger.Error("Share File is currently being modified: {filename}", filename);
-            _logger.Error("{error}: {errorMessage}", nameof(e), e.Message);
+            Logger.Error("Share File is currently being modified: {filename}", filename);
+            Logger.Error("{error}: {errorMessage}", nameof(e), e.Message);
             cancellationTokenSource.Cancel();
             return null;
         }
     }
 
-    private async Task UploadToBlobContainerAsync(BlobContainerClient blobContainerClient,
+    private static async Task UploadToBlobContainerAsync(BlobContainerClient blobContainerClient,
                                                   string filename,
                                                   Stream stream,
                                                   CancellationToken cancellation)
@@ -172,12 +203,12 @@ public class AzureFileShares2BlobContainers
         var blobClient = blobContainerClient.GetBlobClient(filename);
         if (blobClient.Exists(cancellation))
         {
-            _logger.Warning("Blob already exists {filename}", blobClient.Name);
+            Logger.Warning("Blob already exists {filename}", blobClient.Name);
         }
 
         try
         {
-            _logger.Information("Start streaming {filename} from azure file share to azure blob storage", filename);
+            Logger.Information("Start streaming {filename} from azure file share to azure blob storage", filename);
 
             long fileSize = stream.Length;
 
@@ -203,7 +234,7 @@ public class AzureFileShares2BlobContainers
                     if (_percentage != percentage)
                     {
                         percentage = _percentage;
-                        _logger.Debug("{filename} Uploading...{progress}%, at speed {speed}/s",
+                        Logger.Debug("{filename} Uploading...{progress}%, at speed {speed}/s",
                                       filename,
                                       _percentage,
                                       new DataSize(progress / (long)stopWatch.Elapsed.TotalSeconds).Normalize().ToString());
@@ -212,21 +243,21 @@ public class AzureFileShares2BlobContainers
                 cancellationToken: cancellation);
             stopWatch.Stop();
             _ = await blobClient.SetTagsAsync(metaTags, cancellationToken: cancellation);
-            _logger.Information("Finish Upload {filename} to azure storage, at speed {speed}/s",
+            Logger.Information("Finish Upload {filename} to azure storage, at speed {speed}/s",
                 filename,
-                new DataSize(fileSize / (long)stopWatch.Elapsed.TotalSeconds).Normalize().ToString());
+                new DataSize((long)(fileSize / stopWatch.Elapsed.TotalSeconds)).Normalize().ToString());
 
             return;
         }
         catch (Exception e)
         {
-            _logger.Error("Upload Failed: {filename}", Path.GetFileName(filename));
-            _logger.Error("{errorMessage}", e.Message);
+            Logger.Error("Upload Failed: {filename}", Path.GetFileName(filename));
+            Logger.Error("{errorMessage}", e.Message);
             throw;
         }
     }
 
-    private async Task DeleteFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filename, CancellationToken cancellation)
+    private static async Task DeleteFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filename, CancellationToken cancellation)
     {
         if (cancellation.IsCancellationRequested) return;
 
@@ -234,7 +265,7 @@ public class AzureFileShares2BlobContainers
         var response = await shareFileClient.DeleteIfExistsAsync(cancellationToken: cancellation);
         if (response.Value)
         {
-            _logger.Information("File {filename} deleted from File Share {fileShareName}", filename, shareDirectoryClient.ShareName);
+            Logger.Information("File {filename} deleted from File Share {fileShareName}", filename, shareDirectoryClient.ShareName);
         }
     }
 }
