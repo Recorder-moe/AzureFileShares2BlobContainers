@@ -230,14 +230,16 @@ public class AzureFileShares2BlobContainers
                 metadata: metaTags,
                 progressHandler: new Progress<long>(progress =>
                 {
-                    double _percentage = Math.Round(((double)progress) / fileSize * 100);
+                    if (fileSize == 0 || (long)stopWatch.Elapsed.TotalSeconds == 0) return;
+
+                    double _percentage = Math.Round((double)progress / (double)fileSize * 100, 2);
                     if (_percentage != percentage)
                     {
                         percentage = _percentage;
                         Logger.Debug("{filename} Uploading...{progress}%, at speed {speed}/s",
                                       filename,
                                       _percentage,
-                                      new DataSize(progress / (long)stopWatch.Elapsed.TotalSeconds).Normalize().ToString());
+                                      new DataSize((long)(progress / stopWatch.Elapsed.TotalSeconds)).Normalize().ToString());
                     }
                 }),
                 cancellationToken: cancellation);
