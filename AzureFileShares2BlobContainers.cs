@@ -169,7 +169,7 @@ public class AzureFileShares2BlobContainers
             return null;
         }
 
-        Logger.Information("Share File exists: {sharename} {path}", shareFileClient.ShareName, shareFileClient.Path);
+        Logger.Debug("Share File exists: {sharename} {path}", shareFileClient.ShareName, shareFileClient.Path);
 
         try
         {
@@ -232,11 +232,11 @@ public class AzureFileShares2BlobContainers
                 {
                     if (fileSize == 0 || (long)stopWatch.Elapsed.TotalSeconds == 0) return;
 
-                    double _percentage = Math.Round((double)progress / (double)fileSize * 100, 2);
+                    double _percentage = Math.Floor((double)progress / (double)fileSize * 100);
                     if (_percentage != percentage)
                     {
                         percentage = _percentage;
-                        Logger.Debug("{filename} Uploading...{progress}%, at speed {speed}/s",
+                        Logger.Verbose("{filename} Uploading...{progress}%, at speed {speed}/s",
                                       filename,
                                       _percentage,
                                       new DataSize((long)(progress / stopWatch.Elapsed.TotalSeconds)).Normalize().ToString());
