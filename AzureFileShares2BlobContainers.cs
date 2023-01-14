@@ -34,9 +34,11 @@ public class AzureFileShares2BlobContainers
         ".jpeg",
         ".png",
         ".webp",
+
         ".mp4",
         ".webm",
         ".mkv",
+
         ".info.json",
         ".live_chat.json",
         ".description"
@@ -199,8 +201,9 @@ public class AzureFileShares2BlobContainers
             throw new ArgumentNullException(nameof(stream), $"Stream is null while uploading to Blob Storage. {filename}");
         }
         var videoId = filename.Split('.')[0];
+        var directory = GetDirectoryNameFromFilename(filename);
 
-        var blobClient = blobContainerClient.GetBlobClient(filename);
+        var blobClient = blobContainerClient.GetBlobClient($"/{directory}/{filename}");
         if (blobClient.Exists(cancellation))
         {
             Logger.Warning("Blob already exists {filename}", blobClient.Name);
@@ -226,7 +229,7 @@ public class AzureFileShares2BlobContainers
             _ = await blobClient.UploadAsync(
                 content: stream,
                 httpHeaders: new BlobHttpHeaders { ContentType = MimeMapping.MimeUtility.GetMimeMapping(filename) },
-                accessTier: AccessTier.Cool,
+                accessTier: directory == "videos" ? AccessTier.Cool : AccessTier.Hot,
                 metadata: metaTags,
                 progressHandler: new Progress<long>(progress =>
                 {
@@ -270,4 +273,12 @@ public class AzureFileShares2BlobContainers
             Logger.Information("File {filename} deleted from File Share {fileShareName}", filename, shareDirectoryClient.ShareName);
         }
     }
+
+    private static string GetDirectoryNameFromFilename(string filename)
+        => filename.Split('.').Last() switch
+        {
+            "jpg" or "jpeg" or "png" or "webp" => "thumbnails",
+            "mp4" or "webm" or "mkv" => "videos",
+            _ => ""
+        };
 }
