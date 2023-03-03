@@ -12,7 +12,6 @@ using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Enums;
 using Microsoft.OpenApi.Models;
 using Serilog;
 using Serilog.Context;
-using Serilog.Events;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -28,24 +27,6 @@ namespace AzureFileShares2BlobContainers;
 public class AzureFileShares2BlobContainers
 {
     private static ILogger Logger => Helper.Log.Logger;
-
-    private readonly string[] _extensions = new string[]
-    {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".webp",
-
-        ".mp4",
-        ".webm",
-        ".mkv",
-
-        ".info.json",
-        ".live_chat.json",
-        ".description"
-    };
-
-    private string[] GetFileNames(string videoId) => _extensions.Select(p => videoId + p).ToArray();
 
     /// <summary>
     /// Entrypoint!
@@ -69,24 +50,16 @@ public class AzureFileShares2BlobContainers
             _ = LogContext.PushProperty("videoId", videoId);
             Logger.Verbose("API triggered! {apiname}", nameof(RunAsync));
 
-            var files = GetFileNames(videoId);
+            var filename = videoId + ".mp4";
             var shareDirectoryClient = await GetFileShareClientAsync();
 
-            var tasks = new List<Task>();
-            foreach (var filename in files)
+            CancellationTokenSource cancellation = new();
+            using (Stream stream = await GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation))
             {
-                CancellationTokenSource cancellation = new();
-                tasks.Add(Task.Run(async () =>
-                {
-                    using (Stream stream = await GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation))
-                    {
-                        await UploadToBlobContainerAsync(blobContainerClient, filename, stream, cancellation.Token);
-                    }
-                    await DeleteFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token);
-                }));
+                await UploadToBlobContainerAsync(blobContainerClient, filename, stream, cancellation.Token);
             }
+            await DeleteFromFileShareAsync(shareDirectoryClient, filename, cancellation.Token);
 
-            await Task.WhenAll(tasks);
             Logger.Information("Finish task {videoId}", videoId);
         }
         catch (Exception e)
@@ -149,9 +122,9 @@ public class AzureFileShares2BlobContainers
     }
 
     private static async Task UploadToBlobContainerAsync(BlobContainerClient blobContainerClient,
-                                                  string filename,
-                                                  Stream stream,
-                                                  CancellationToken cancellation)
+                                                         string filename,
+                                                         Stream stream,
+                                                         CancellationToken cancellation)
     {
         if (cancellation.IsCancellationRequested) return;
 
@@ -160,9 +133,8 @@ public class AzureFileShares2BlobContainers
             throw new ArgumentNullException(nameof(stream), $"Stream is null while uploading to Blob Storage. {filename}");
         }
         var videoId = filename.Split('.')[0];
-        var directory = GetDirectoryNameFromFilename(filename);
 
-        var blobClient = blobContainerClient.GetBlobClient($"/{directory}/{filename}");
+        var blobClient = blobContainerClient.GetBlobClient($"/videos/{filename}");
         if (blobClient.Exists(cancellation))
         {
             Logger.Warning("Blob already exists {filename}", blobClient.Name);
@@ -187,8 +159,8 @@ public class AzureFileShares2BlobContainers
             stopWatch.Start();
             _ = await blobClient.UploadAsync(
                 content: stream,
-                httpHeaders: new BlobHttpHeaders { ContentType = MimeMapping.MimeUtility.GetMimeMapping(filename) },
-                accessTier: directory == "videos" ? AccessTier.Cool : AccessTier.Hot,
+                httpHeaders: new BlobHttpHeaders { ContentType = "video/mp4" },
+                accessTier: AccessTier.Cool,
                 metadata: metaTags,
                 progressHandler: new Progress<long>(progress =>
                 {
