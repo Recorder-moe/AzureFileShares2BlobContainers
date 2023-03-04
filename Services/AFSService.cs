@@ -63,12 +63,10 @@ public static class AFSService
         }
     }
 
-    public static async Task DeleteFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filename, CancellationToken cancellation)
+    public static async Task DeleteFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filename)
     {
-        if (cancellation.IsCancellationRequested) return;
-
         var shareFileClient = shareDirectoryClient.GetFileClient(filename);
-        var response = await shareFileClient.DeleteIfExistsAsync(cancellationToken: cancellation);
+        var response = await shareFileClient.DeleteIfExistsAsync();
         if (response.Value)
         {
             Logger.Information("File {filename} deleted from File Share {fileShareName}", filename, shareDirectoryClient.ShareName);
