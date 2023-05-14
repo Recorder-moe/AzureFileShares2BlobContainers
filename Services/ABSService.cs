@@ -50,12 +50,16 @@ public static class ABSService
                 { "fileSize", fileSize.ToString() }
             };
 
+            var accessTier = Environment.GetEnvironmentVariable("VideoBlobTier") == "Hot"
+                ? AccessTier.Hot
+                : AccessTier.Cool;
+
             stream.Seek(0, SeekOrigin.Begin);
             stopWatch.Start();
             _ = await blobClient.UploadAsync(
                 content: stream,
                 httpHeaders: new BlobHttpHeaders { ContentType = "video/mp4" },
-                accessTier: AccessTier.Cool,
+                accessTier: accessTier,
                 metadata: metaTags,
                 progressHandler: new Progress<long>(progress =>
                 {
