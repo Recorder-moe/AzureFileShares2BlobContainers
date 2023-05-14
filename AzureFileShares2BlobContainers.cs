@@ -35,6 +35,7 @@ public class AzureFileShares2BlobContainers
     }
 
     [FunctionName("RunOrchestratorAsync")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Binding", "DF0201:OrchestrationTrigger must be used with a DurableOrchestrationContext or DurableOrchestrationContextBase.", Justification = "<¼È¤î>")]
     public async Task<string> RunOrchestratorAsync(
         [OrchestrationTrigger] IDurableOrchestrationContext context)
     {
