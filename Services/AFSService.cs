@@ -33,20 +33,10 @@ public static class AFSService
         return rootdirectory;
     }
 
-    public static async Task<Stream> GetStreamFromFileShareAsync(ShareDirectoryClient shareDirectoryClient,
-                                                                  string filenamePrefix,
-                                                                  CancellationTokenSource cancellationTokenSource)
+    public static async Task<Stream> GetStreamFromFileShareAsync(ShareFileItem shareFileItem,
+                                                                 CancellationTokenSource cancellationTokenSource)
     {
-        ShareFileItem shareFileItem = shareDirectoryClient.GetFilesAndDirectories(filenamePrefix).FirstOrDefault(p => !p.IsDirectory);
-
-        // Skip if the file is not exists
-        if (null == shareFileItem)
-        {
-            Logger.Debug("Share File not exists, skip: {filename}", filenamePrefix);
-            cancellationTokenSource.Cancel();
-            return null;
-        }
-        var shareFileClient = shareDirectoryClient.GetFileClient(shareFileItem.Name);
+        var shareFileClient = (await GetFileShareClientAsync()).GetFileClient(shareFileItem.Name);
 
         Logger.Debug("Share File exists: {sharename} {path}", shareFileClient.ShareName, shareFileClient.Path);
 
@@ -66,14 +56,27 @@ public static class AFSService
         }
     }
 
-    public static async Task DeleteFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filenamePrefix)
+    public static async Task DeleteFromFileShareAsync(ShareFileItem shareFileItem)
     {
-        ShareFileItem shareFileItem = shareDirectoryClient.GetFilesAndDirectories(filenamePrefix).FirstOrDefault(p => !p.IsDirectory);
-        var shareFileClient = shareDirectoryClient.GetFileClient(shareFileItem.Name);
+        var shareFileClient = (await GetFileShareClientAsync()).GetFileClient(shareFileItem.Name);
         var response = await shareFileClient.DeleteIfExistsAsync();
         if (response.Value)
         {
-            Logger.Information("File {filename} deleted from File Share {fileShareName}", shareFileClient.Name, shareDirectoryClient.ShareName);
+            Logger.Information("File {filename} deleted from File Share", shareFileClient.Name);
         }
+    }
+
+    internal static async Task<ShareFileItem> GetShareFileItem(string filenamePrefix,
+                                                               CancellationTokenSource cancellationTokenSource = default)
+    {
+        ShareFileItem shareFileItem = (await GetFileShareClientAsync()).GetFilesAndDirectories(filenamePrefix).FirstOrDefault(p => !p.IsDirectory);
+
+        // Skip if the file is not exists
+        if (null == shareFileItem)
+        {
+            Logger.Debug("Share File not exists, skip: {filename}", filenamePrefix);
+            cancellationTokenSource?.Cancel();
+        }
+        return shareFileItem;
     }
 }

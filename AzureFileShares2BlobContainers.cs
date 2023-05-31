@@ -55,11 +55,11 @@ public class AzureFileShares2BlobContainers
         [Blob("livestream-recorder")] BlobContainerClient blobContainerClient)
     {
         CancellationTokenSource cancellation = new();
-        var shareDirectoryClient = await AFSService.GetFileShareClientAsync();
+        var file = await AFSService.GetShareFileItem(filenamePrefix, cancellation);
 
-        using (var stream = await AFSService.GetStreamFromFileShareAsync(shareDirectoryClient, filenamePrefix, cancellation))
+        using (var stream = await AFSService.GetStreamFromFileShareAsync(file, cancellation))
         {
-            await ABSService.UploadToBlobContainerAsync(blobContainerClient, filenamePrefix+DateTime.UtcNow.ToString("HHmmss"), stream, cancellation.Token);
+            await ABSService.UploadToBlobContainerAsync(blobContainerClient, file.Name, stream, cancellation.Token);
         }
 
         Logger.Information("Copied {filename} to blob container", filenamePrefix);
@@ -69,9 +69,8 @@ public class AzureFileShares2BlobContainers
     public async Task DeleteFileFromFileShare(
         [ActivityTrigger] string filename)
     {
-        var shareDirectoryClient = await AFSService.GetFileShareClientAsync();
-
-        await AFSService.DeleteFromFileShareAsync(shareDirectoryClient, filename);
+        var file = await AFSService.GetShareFileItem(filename);
+        await AFSService.DeleteFromFileShareAsync(file);
 
         Logger.Information("Deleted {filename} from file share", filename);
     }
