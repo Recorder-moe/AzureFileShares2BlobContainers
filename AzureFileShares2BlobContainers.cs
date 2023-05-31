@@ -8,6 +8,7 @@ using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Azure.WebJobs.Extensions.OpenApi.Core.Attributes;
 using Microsoft.OpenApi.Models;
 using Serilog;
+using System;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,51 +21,48 @@ public class AzureFileShares2BlobContainers
 
     [FunctionName("AzureFileShares2BlobContainers")]
     [OpenApiOperation(operationId: "Run", tags: new[] { "name" })]
-    [OpenApiParameter(name: "videoId", In = ParameterLocation.Query, Required = true, Type = typeof(string), Description = "The **VideoId** to process")]
+    [OpenApiParameter(name: "filename", In = ParameterLocation.Query, Required = true, Type = typeof(string), Description = "The filename to process")]
     [OpenApiResponseWithBody(statusCode: HttpStatusCode.Accepted, contentType: "application/json", bodyType: typeof(string), Description = "The response when the function is accepted.")]
     public async Task<IActionResult> RunAsync(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = null)] HttpRequest req,
         [DurableClient] IDurableOrchestrationClient starter)
     {
-        var videoId = req.GetQueryParameterDictionary()["videoId"];
+        var filename = req.GetQueryParameterDictionary()["filename"];
         Logger.Information("API triggered! {apiname}", nameof(RunAsync));
 
-        var instanceId = await starter.StartNewAsync<string>("RunOrchestratorAsync", videoId);
+        var instanceId = await starter.StartNewAsync<string>("RunOrchestratorAsync", filename);
 
         return starter.CreateCheckStatusResponse(req, instanceId);
     }
 
     [FunctionName("RunOrchestratorAsync")]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Binding", "DF0201:OrchestrationTrigger must be used with a DurableOrchestrationContext or DurableOrchestrationContextBase.", Justification = "<¼È¤î>")]
     public async Task<string> RunOrchestratorAsync(
         [OrchestrationTrigger] IDurableOrchestrationContext context)
     {
-        var videoId = context.GetInput<string>();
+        var filenamePrefix = context.GetInput<string>();
 
-        var filename = videoId + ".mp4";
+        await context.CallActivityAsync(nameof(CopyFileFromFileShareToBlobStorage), filenamePrefix);
+        await context.CallActivityAsync(nameof(DeleteFileFromFileShare), filenamePrefix);
 
-        await context.CallActivityAsync(nameof(CopyFileFromFileShareToBlobStorage), filename);
-        await context.CallActivityAsync(nameof(DeleteFileFromFileShare), filename);
-
-        Logger.Information("Finish task {videoId}", videoId);
+        Logger.Information("Finish task {filename}", filenamePrefix);
 
         return "Done";
     }
 
     [FunctionName(nameof(CopyFileFromFileShareToBlobStorage))]
     public async Task CopyFileFromFileShareToBlobStorage(
-        [ActivityTrigger] string filename,
+        [ActivityTrigger] string filenamePrefix,
         [Blob("livestream-recorder")] BlobContainerClient blobContainerClient)
     {
         CancellationTokenSource cancellation = new();
         var shareDirectoryClient = await AFSService.GetFileShareClientAsync();
 
-        using (var stream = await AFSService.GetStreamFromFileShareAsync(shareDirectoryClient, filename, cancellation))
+        using (var stream = await AFSService.GetStreamFromFileShareAsync(shareDirectoryClient, filenamePrefix, cancellation))
         {
-            await ABSService.UploadToBlobContainerAsync(blobContainerClient, filename, stream, cancellation.Token);
+            await ABSService.UploadToBlobContainerAsync(blobContainerClient, filenamePrefix+DateTime.UtcNow.ToString("HHmmss"), stream, cancellation.Token);
         }
 
-        Logger.Information("Copied {filename} to blob container", filename);
+        Logger.Information("Copied {filename} to blob container", filenamePrefix);
     }
 
     [FunctionName(nameof(DeleteFileFromFileShare))]

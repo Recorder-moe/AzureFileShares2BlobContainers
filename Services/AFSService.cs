@@ -3,6 +3,7 @@ using Azure.Storage.Files.Shares.Models;
 using Serilog;
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -32,18 +33,19 @@ public static class AFSService
     }
 
     public static async Task<Stream> GetStreamFromFileShareAsync(ShareDirectoryClient shareDirectoryClient,
-                                                                  string filename,
+                                                                  string filenamePrefix,
                                                                   CancellationTokenSource cancellationTokenSource)
     {
-        var shareFileClient = shareDirectoryClient.GetFileClient(filename);
+        ShareFileItem shareFileItem = shareDirectoryClient.GetFilesAndDirectories(filenamePrefix).FirstOrDefault(p => !p.IsDirectory);
 
         // Skip if the file is not exists
-        if (!await shareFileClient.ExistsAsync())
+        if (null == shareFileItem)
         {
-            Logger.Debug("Share File not exists, skip: {filename}", filename);
+            Logger.Debug("Share File not exists, skip: {filename}", filenamePrefix);
             cancellationTokenSource.Cancel();
             return null;
         }
+        var shareFileClient = shareDirectoryClient.GetFileClient(shareFileItem.Name);
 
         Logger.Debug("Share File exists: {sharename} {path}", shareFileClient.ShareName, shareFileClient.Path);
 
@@ -51,25 +53,26 @@ public static class AFSService
         {
             // Open stream
             var stream = await shareFileClient.OpenReadAsync(cancellationToken: cancellationTokenSource.Token);
-            Logger.Information("Get file stream. {filename} {filelength}", filename, stream.Length);
+            Logger.Information("Get file stream. {filename} {filelength}", shareFileClient.Name, stream.Length);
             return stream;
         }
         catch (ShareFileModifiedException e)
         {
-            Logger.Error("Share File is currently being modified: {filename}", filename);
+            Logger.Error("Share File is currently being modified: {filename}", shareFileClient.Name);
             Logger.Error("{error}: {errorMessage}", nameof(e), e.Message);
             cancellationTokenSource.Cancel();
             return null;
         }
     }
 
-    public static async Task DeleteFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filename)
+    public static async Task DeleteFromFileShareAsync(ShareDirectoryClient shareDirectoryClient, string filenamePrefix)
     {
-        var shareFileClient = shareDirectoryClient.GetFileClient(filename);
+        ShareFileItem shareFileItem = shareDirectoryClient.GetFilesAndDirectories(filenamePrefix).FirstOrDefault(p => !p.IsDirectory);
+        var shareFileClient = shareDirectoryClient.GetFileClient(shareFileItem.Name);
         var response = await shareFileClient.DeleteIfExistsAsync();
         if (response.Value)
         {
-            Logger.Information("File {filename} deleted from File Share {fileShareName}", filename, shareDirectoryClient.ShareName);
+            Logger.Information("File {filename} deleted from File Share {fileShareName}", shareFileClient.Name, shareDirectoryClient.ShareName);
         }
     }
 }
