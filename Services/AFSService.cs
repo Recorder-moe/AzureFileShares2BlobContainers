@@ -17,8 +17,9 @@ public static class AFSService
     {
         // Get the connection string from app settings
         string connectionString = Environment.GetEnvironmentVariable("AzureStorage");
+        string shareName = Environment.GetEnvironmentVariable("FileShareName");
 
-        var shareClient = new ShareClient(connectionString, "livestream-recorder");
+        var shareClient = new ShareClient(connectionString, shareName);
 
         // Ensure that the share exists
         if (!await shareClient.ExistsAsync())
