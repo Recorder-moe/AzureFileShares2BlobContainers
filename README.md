@@ -1,5 +1,9 @@
 # AzureFileShares2BlobContainers
 
+> **Warning**\
+> This project has been archived as it has been replaced by the [azure-uploader](https://github.com/Recorder-moe/azure-uploader) project.\
+> Although it is still functional, no further development will be carried out.
+
 AzureFileShares2BlobContainers is an Azure Functions project built with .NET 6 that facilitates the transfer of recorded video files from Azure Files to Azure Blob Storage. This Azure Function is called by the LivestreamRecorderService and should deployed in the same Azure region as the Azure Storage of this project. This ensures that the files are transferred within the same region, avoiding additional outbound data transfer costs.
 
 ## Prerequisites
